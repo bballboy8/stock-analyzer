@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 from tqdm import tqdm
 import yfinance as yf
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def load_tickers(file_path="tickers.txt"):
     with open(file_path, "r") as file:
@@ -9,7 +10,6 @@ def load_tickers(file_path="tickers.txt"):
 
 def create_database_connection():
     try:
-        # This change ensures that multiple threads can share the connection safely.
         return sqlite3.connect("stock_data.db", check_same_thread=False)
     except Exception as e:
         print(f"Error creating database connection: {e}")
@@ -136,9 +136,10 @@ def get_stock_data_with_financials(ticker):
 
 def main():
     tickers = load_tickers()
-    for ticker in tqdm(tickers):
-        get_stock_data_with_financials(ticker)
-
+    with ThreadPoolExecutor(max_workers=1000) as executor:
+        futures = [executor.submit(get_stock_data_with_financials, ticker) for ticker in tickers]
+        for future in tqdm(as_completed(futures), total=len(tickers)):
+            future.result()
 
 if __name__ == "__main__":
     main()
