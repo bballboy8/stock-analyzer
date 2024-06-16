@@ -1,6 +1,10 @@
 import sqlite3
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
+import warnings
+
+warnings.simplefilter("ignore")
 
 
 def query_db(query, db_path="stock_data.db"):
@@ -10,7 +14,7 @@ def query_db(query, db_path="stock_data.db"):
     return df
 
 
-df = query_db("select * from prices limit 100")
+df = query_db("select * from prices limit 7000")
 
 
 def calculate_atr(df, length):
@@ -23,48 +27,47 @@ def calculate_atr(df, length):
 
 
 # Function to calculate Supertrend
-def calculate_supertrend(df, factor, length):
-    df = calculate_atr(df, length)
-    df["Upper Band"] = ((df["High"] + df["Low"]) / 2) + (factor * df["ATR"])
-    df["Lower Band"] = ((df["High"] + df["Low"]) / 2) - (factor * df["ATR"])
-    df["In Uptrend"] = True
+def calculate_supertrend(df, multiplier, length):
+    data = calculate_atr(df, length)
+    data['BU'] = (data['High'] + data['Low']) / 2 + (multiplier * data['ATR'])
+    data['BL'] = (data['High'] + data['Low']) / 2 - (multiplier * data['ATR'])
 
-    for current in range(1, len(df.index)):
-        previous = current - 1
+    # Initialize columns for Final Upper Band (FU), Final Lower Band (FL), and Supertrend
+    data['FU'] = 0.0
+    data['FL'] = 0.0
+    data[f'Supertrend_{multiplier}_{length}'] = 0.0
 
-        if df["Close"][current] > df["Upper Band"][previous]:
-            df["In Uptrend"][current] = True
-        elif df["Close"][current] < df["Lower Band"][previous]:
-            df["In Uptrend"][current] = False
+    # Calculate Final Upper Band (FU) and Final Lower Band (FL)
+    for i in range(1, len(data)):
+        if data['Close'][i-1] <= data['FU'][i-1]:
+            data['FU'][i] = min(data['BU'][i], data['FU'][i-1])
         else:
-            df["In Uptrend"][current] = df["In Uptrend"][previous]
-            if (
-                df["In Uptrend"][current]
-                and df["Lower Band"][current] < df["Lower Band"][previous]
-            ):
-                df["Lower Band"][current] = df["Lower Band"][previous]
-            if (
-                not df["In Uptrend"][current]
-                and df["Upper Band"][current] > df["Upper Band"][previous]
-            ):
-                df["Upper Band"][current] = df["Upper Band"][previous]
+            data['FU'][i] = data['BU'][i]
 
-    df["Supertrend"] = np.where(df["In Uptrend"], df["Lower Band"], df["Upper Band"])
-    return df
+        if data['Close'][i-1] >= data['FL'][i-1]:
+            data['FL'][i] = max(data['BL'][i], data['FL'][i-1])
+        else:
+            data['FL'][i] = data['BL'][i]
+
+    # Calculate Supertrend
+    for i in range(len(data)):
+        if data['Close'][i] > data['FU'][i]:
+            data[f'Supertrend_{multiplier}_{length}'][i] = data['FL'][i]
+        else:
+            data[f'Supertrend_{multiplier}_{length}'][i] = data['FU'][i]
+    return data
 
 
 # Apply Supertrend calculation for each ticker and each set of parameters
 tickers = df["ticker"].unique()
 results = []
-for ticker in tickers:
-    ticker_df = df[df["ticker"] == ticker].copy()
+for ticker in tqdm(tickers):
+    ticker_df = df[df["ticker"] == ticker].sort_values(by="Date")
     for factor, length in [(3, 12), (2, 11), (1, 10)]:
         result_df = calculate_supertrend(ticker_df, factor, length)
-        result_df["Factor"] = factor
-        result_df["Length"] = length
         results.append(result_df)
 
 # Combine all results
 final_df = pd.concat(results)
-pd.set_option("display.max_rows", 500)
-print(final_df[["Factor", "Length", "Supertrend"]])
+pd.set_option("display.max_rows", None)
+print(final_df.tail()[["Date", "ticker", "Supertrend_1_10", "Supertrend_2_11", "Supertrend_3_12"]])
